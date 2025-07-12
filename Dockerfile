@@ -122,6 +122,10 @@ COPY --from=common_pkg_provider /etc/profile.d/conda.sh /etc/profile.d/conda.sh
 COPY --from=verilator_provider /usr/local /usr/local
 COPY --from=systemc_provider ${SYSTEMC_HOME} ${SYSTEMC_HOME}
 
+# 把 eman.sh 複製進去並加執行權限
+COPY eman.sh /home/${USERNAME}/eman.sh
+RUN chmod +x /home/${USERNAME}/eman.sh
+
 # 設定環境變數
 ENV PATH="${CONDA_DIR}/bin:$PATH"
 ENV SYSTEMC_HOME=${SYSTEMC_HOME}
