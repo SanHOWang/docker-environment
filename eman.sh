@@ -9,12 +9,12 @@ Usage: eman [command]
 
   C Compiler / Make
   -----------------------------
-  eman c-compiler-version       : Print version of GCC and Make
-  eman c-compiler-example       : Compile and run C example
+  eman c-version       : Print version of GCC and Make
+  eman c-example       : Compile and run C example
 
   Verilator
   -----------------------------
-  eman check-verilator          : Print the version of Verilator
+  eman verilator-version          : Print the version of Verilator
   eman verilator-example        : Compile and run Verilator example
 
 EOF
@@ -139,9 +139,9 @@ EOF
 
 case "$1" in
     help|"") help ;;
-    check-verilator) check_verilator ;;
+    verilator-version) check_verilator ;;
     verilator-example) verilator_example ;;
-    c-compiler-version) c_compiler_version ;;
-    c-compiler-example) c_compiler_example ;;
+    c-version) c_compiler_version ;;
+    c-example) c_compiler_example ;;
     *) echo "Unknown command: $1"; help ;;
 esac
