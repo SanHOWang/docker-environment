@@ -56,6 +56,7 @@ RUN case "${TARGETARCH}" in \
     echo "conda activate base" >> /etc/bash.bashrc
 
 # 驗證工具版本與 Conda 環境
+#TODO
 RUN vim --version && \
     git --version && \
     curl --version && \
@@ -107,6 +108,7 @@ RUN wget https://github.com/accellera-official/systemc/archive/refs/tags/${SYSTE
     rm -rf ${SYSTEMC_HOME}/build
 
 # --------- Stage final_image ---------
+# ToDo
 FROM base AS final_image
 ARG CONDA_DIR=/opt/conda
 ARG SYSTEMC_HOME=/opt/systemc/install
@@ -125,11 +127,16 @@ COPY --from=systemc_provider ${SYSTEMC_HOME} ${SYSTEMC_HOME}
 # 把 eman.sh 複製進去並加執行權限
 COPY eman.sh /home/${USERNAME}/eman.sh
 RUN chmod +x /home/${USERNAME}/eman.sh
+#TODO
+#要加環境變數
+#不會放在user下
 
 # 設定環境變數
 ENV PATH="${CONDA_DIR}/bin:$PATH"
 ENV SYSTEMC_HOME=${SYSTEMC_HOME}
-ENV LD_LIBRARY_PATH="${SYSTEMC_HOME}/lib-linux64:$LD_LIBRARY_PATH"
+#TODO
+#架構要增加
+ENV LD_LIBRARY_PATH="${SYSTEMC_HOME}/lib-linux64"
 
 # 切換使用者
 USER ${USERNAME}
