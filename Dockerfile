@@ -1,42 +1,10 @@
-# --------- Stage base ---------
-FROM ubuntu:24.04 AS base
-
-ARG UID=1001
-ARG GID=1001
-ARG USERNAME=user
-
-ENV DEBIAN_FRONTEND=noninteractive
-ENV TZ=Asia/Taipei
-
-RUN apt-get update && \
-    apt-get install -y --no-install-recommends \
-        tzdata sudo && \
-    ln -fs /usr/share/zoneinfo/$TZ /etc/localtime && \
-    dpkg-reconfigure -f noninteractive tzdata
-
-RUN if getent group ${GID}; then \
-        echo "GID ${GID} already exists" && exit 1; \
-    else \
-        groupadd -g ${GID} ${USERNAME}; \
-    fi && \
-    if getent passwd ${UID}; then \
-        echo "UID ${UID} already exists" && exit 1; \
-    else \
-        useradd -m -u ${UID} -g ${GID} -s /bin/bash ${USERNAME}; \
-    fi && \
-    echo "${USERNAME} ALL=(ALL) NOPASSWD:ALL" >> /etc/sudoers && \
-    apt-get clean && rm -rf /var/lib/apt/lists/*
-
-# --------- Stage common_pkg_provider ---------
-FROM base AS common_pkg_provider
+# --------- Stage conda_provider ---------
+FROM ubuntu:24.04 AS conda_provider
 
 # 安裝常用 CLI 工具與 Python/PIP
 RUN apt-get update && \
     apt-get install -y --no-install-recommends \
-        vim git curl wget ca-certificates bzip2 \
-        build-essential python3 python3-pip && \
-    ln -sf /usr/bin/python3 /usr/bin/python && \
-    ln -sf /usr/bin/pip3 /usr/bin/pip && \
+        wget ca-certificates && \
     apt-get clean && rm -rf /var/lib/apt/lists/*
 
 # 安裝 Miniconda（根據 CPU 架構）
@@ -51,92 +19,154 @@ RUN case "${TARGETARCH}" in \
     wget https://repo.anaconda.com/miniconda/Miniconda3-latest-Linux-${ARCH}.sh -O miniconda.sh && \
     bash miniconda.sh -b -p ${CONDA_DIR} && \
     rm miniconda.sh && \
-    ln -s ${CONDA_DIR}/etc/profile.d/conda.sh /etc/profile.d/conda.sh && \
-    echo ". /opt/conda/etc/profile.d/conda.sh" >> /etc/bash.bashrc && \
-    echo "conda activate base" >> /etc/bash.bashrc
+    # 執行 conda init bash
+    ${CONDA_DIR}/bin/conda init bash
 
-# 驗證工具版本與 Conda 環境
-#TODO
-RUN vim --version && \
-    git --version && \
-    curl --version && \
-    wget --version && \
-    gcc --version && \
-    g++ --version && \
-    make --version && \
-    python3 --version && \
-    pip --version && \
-    ${CONDA_DIR}/bin/conda --version && \
-    ${CONDA_DIR}/bin/conda list
+# 把 Conda 加入 PATH（供其他 RUN 使用）
+ENV PATH=${CONDA_DIR}/condabin:${PATH}
 
+# --------- Stage verilator_provider ---------
+FROM ubuntu:24.04 AS verilator_provider
 
-FROM common_pkg_provider AS verilator_provider
+ENV CORE_TOOLS="git help2man perl python3 build-essential ca-certificates"
+ENV LEXER_TOOLS="flex bison libfl2 libfl-dev"
+ENV BUILD_TOOLS="autoconf"
+ENV ZLIB_TOOLS="zlib1g zlib1g-dev"
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
-    autoconf flex bison libfl-dev help2man perl python3 \
-    zlib1g zlib1g-dev libfl2 && \
-    rm -rf /var/lib/apt/lists/*
+    ${CORE_TOOLS} \
+    ${LEXER_TOOLS} \
+    ${BUILD_TOOLS} \
+    ${ZLIB_TOOLS} && \
+    apt-get clean && rm -rf /var/lib/apt/lists/*
 
-RUN git clone https://github.com/verilator/verilator.git /tmp/verilator && \
-    cd /tmp/verilator && \
-    git checkout v5.024 && \
-    autoconf && \
-    ./configure && \
+ARG VERILATOR_VERSION="v5.024"
+ARG VERILATOR_URL="https://github.com/verilator/verilator.git"
+
+RUN git clone https://github.com/verilator/verilator && \
+    unset VERILATOR_ROOT && \
+    cd verilator && \
+    git pull && \
+    git checkout ${VERILATOR_VERSION} &&\
+    autoconf &&\
+    ./configure --prefix=/usr/local/verilator && \
     make -j$(nproc) && \
     make install && \
-    rm -rf /tmp/verilator
+    cd .. && \
+    rm -rf verilator
 
-FROM common_pkg_provider AS systemc_provider
+FROM ubuntu:24.04 AS systemc_provider
 
 ARG SYSTEMC_VERSION=2.3.4
-ARG SYSTEMC_HOME=/opt/systemc
-
 RUN apt-get update && apt-get install -y --no-install-recommends \
-    autoconf automake libtool m4 pkg-config && \
+    build-essential tar wget cmake ca-certificates && \
     rm -rf /var/lib/apt/lists/*
 
 RUN wget https://github.com/accellera-official/systemc/archive/refs/tags/${SYSTEMC_VERSION}.tar.gz -O systemc.tar.gz && \
     tar -xzf systemc.tar.gz && \
-    rm systemc.tar.gz && \
-    mv systemc-${SYSTEMC_VERSION} ${SYSTEMC_HOME} && \
-    cd ${SYSTEMC_HOME} && \
-    autoreconf -i && \
-    mkdir -p build && cd build && \
-    ../configure --prefix=${SYSTEMC_HOME}/install && \
-    make -j$(nproc) && \
-    make install && \
-    rm -rf ${SYSTEMC_HOME}/build
+    cmake -S systemc-${SYSTEMC_VERSION} \
+          -B build \
+          -DCMAKE_INSTALL_PREFIX=/usr/local/systemc-${SYSTEMC_VERSION} \
+          -DCMAKE_CXX_EXTENSIONS=OFF && \
+    cmake --build build --parallel && \
+    cmake --install build && \
+    rm -rf build systemc.tar.gz systemc-${SYSTEMC_VERSION}
 
-# --------- Stage final_image ---------
-# ToDo
-FROM base AS final_image
-ARG CONDA_DIR=/opt/conda
-ARG SYSTEMC_HOME=/opt/systemc/install
+# --------- Stage base ---------
+FROM ubuntu:24.04 AS base
+
+ARG UID=1001
+ARG GID=1001
 ARG USERNAME=user
 
-# Copy 全部依賴工具與環境（包含 libs）
-COPY --from=common_pkg_provider /usr /usr
-COPY --from=common_pkg_provider /etc/alternatives /etc/alternatives
-COPY --from=common_pkg_provider ${CONDA_DIR} ${CONDA_DIR}
-COPY --from=common_pkg_provider /etc/profile.d/conda.sh /etc/profile.d/conda.sh
+ENV DEBIAN_FRONTEND=noninteractive
+ENV TZ=Asia/Taipei
 
-# Copy Verilator + SystemC
-COPY --from=verilator_provider /usr/local /usr/local
+# Set environment variables
+ENV USER=${USERNAME} \
+    HOME=/home/${USERNAME} \
+    PATH="${PATH}:/home/${USERNAME}/.local/bin" \
+    TZ=${TZ} \
+    LC_ALL=en_US.UTF-8
+
+# 安裝基本工具、時區設定、中文 locale 支援
+RUN apt-get update && \
+    apt-get install -y --no-install-recommends \
+        tzdata sudo locales && \
+    ln -fns /usr/share/zoneinfo/${TZ} /etc/localtime && \
+    echo "${TZ}" > /etc/timezone && \
+    dpkg-reconfigure -f noninteractive tzdata && \
+    sed -i 's/# en_US.UTF-8/en_US.UTF-8/' /etc/locale.gen && \
+    sed -i 's/# zh_TW.UTF-8/zh_TW.UTF-8/' /etc/locale.gen && \
+    sed -i 's/# zh_TW BIG5/zh_TW BIG5/' /etc/locale.gen && \
+    locale-gen && \
+    dpkg-reconfigure --frontend=noninteractive locales && \
+    update-locale LANG=en_US.UTF-8 LC_ALL=en_US.UTF-8
+
+RUN mkdir -p /etc/sudoers.d && \
+    groupadd -g ${GID} "${USERNAME}" && \
+    useradd -u ${UID} -m -s /bin/bash -g ${GID} "${USERNAME}" && \
+    echo "${USERNAME} ALL=(ALL) NOPASSWD:ALL" > /etc/sudoers.d/"${USERNAME}" && \
+    chmod 0440 /etc/sudoers.d/"${USERNAME}" && \
+    passwd -d "${USERNAME}" && \
+    apt-get clean && rm -rf /var/lib/apt/lists/*
+
+# User account configuration
+RUN mkdir -p /home/"${USERNAME}"/.ssh && \
+    mkdir -p /home/"${USERNAME}"/.vscode-server && \
+    mkdir -p /home/"${USERNAME}"/projects
+RUN chown -R ${UID}:${GID} /home/"${USERNAME}"
+
+ENV CORE_TOOLS="apt-utils sudo vim git"
+ENV WEB_TOOLS="curl wget ca-certificates"
+ENV DEVELOPMENT_TOOLS="build-essential"
+ENV PYTHON_PACKAGES="python3 python3-pip"
+
+RUN apt-get update && \
+    apt-get install -y --no-install-recommends \
+      ${CORE_TOOLS} \
+      ${WEB_TOOLS} \
+      ${DEVELOPMENT_TOOLS} \
+      ${PYTHON_PACKAGES} && \
+    rm -rf /var/lib/apt/lists/*
+
+    ### 1. Copy and setup Miniconda
+COPY --from=conda_provider /opt/conda /opt/conda
+RUN chown -R ${UID}:${GID} /opt/conda
+ENV CONDA_HOME=/opt/conda
+ENV PATH=${CONDA_HOME}/condabin:${PATH}
+
+### 2. Copy and setup Verilator
+COPY --from=verilator_provider /usr/local/verilator /usr/local/verilator
+ENV VERILATOR_HOME=/usr/local/verilator
+ENV PATH=${VERILATOR_HOME}/bin:${PATH}
+
+### 3. Copy and setup SystemC
+ARG SYSTEMC_VERSION=2.3.4
+ENV SYSTEMC_HOME=/usr/local/systemc-${SYSTEMC_VERSION}
 COPY --from=systemc_provider ${SYSTEMC_HOME} ${SYSTEMC_HOME}
 
-# 把 eman.sh 複製進去並加執行權限
-COPY eman.sh /home/${USERNAME}/eman.sh
-RUN chmod +x /home/${USERNAME}/eman.sh
-#TODO
-#要加環境變數
-#不會放在user下
+ENV SYSTEMC_CXXFLAGS="-I${SYSTEMC_HOME}/include"
+ENV SYSTEMC_LDFLAGS="-L${SYSTEMC_HOME}/lib \
+                     -L${SYSTEMC_HOME}/lib-linux \
+                     -L${SYSTEMC_HOME}/lib-linux64 \
+                     -lsystemc"
 
-# 設定環境變數
-ENV PATH="${CONDA_DIR}/bin:$PATH"
-ENV SYSTEMC_HOME=${SYSTEMC_HOME}
-#TODO
-#架構要增加
-ENV LD_LIBRARY_PATH="${SYSTEMC_HOME}/lib-linux64"
+# Expose SystemC headers and libraries path to the toolchain
+ENV CPATH="${SYSTEMC_HOME}/include:" \
+    LIBRARY_PATH="${SYSTEMC_HOME}/lib:${SYSTEMC_HOME}/lib-linux:${SYSTEMC_HOME}/lib-linux64:"
+# Register runtime library paths and refresh the dynamic linker cache
+RUN for d in lib lib-linux lib-linux64; do \
+        if [ -d "${SYSTEMC_HOME}/${d}" ]; then \
+            echo "${SYSTEMC_HOME}/${d}" > /etc/ld.so.conf.d/systemc-${d}.conf; \
+        fi; \
+    done && ldconfig
+
+# Copy the eman script to the container
+COPY ./scripts/eman.sh /usr/local/bin/eman
+RUN chmod +x /usr/local/bin/eman
+# Make sure the eman script can be executed by the user
+ENV PATH="/usr/local/bin:${PATH}"
 
 # 切換使用者
 USER ${USERNAME}
