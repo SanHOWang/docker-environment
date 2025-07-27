@@ -117,7 +117,7 @@ RUN mkdir -p /home/"${USERNAME}"/.ssh && \
     mkdir -p /home/"${USERNAME}"/projects
 RUN chown -R ${UID}:${GID} /home/"${USERNAME}"
 
-ENV CORE_TOOLS="apt-utils sudo vim git"
+ENV CORE_TOOLS="apt-utils sudo vim git gdb"
 ENV WEB_TOOLS="curl wget ca-certificates"
 ENV DEVELOPMENT_TOOLS="build-essential"
 ENV PYTHON_PACKAGES="python3 python3-pip"
